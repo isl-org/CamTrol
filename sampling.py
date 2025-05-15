@@ -49,7 +49,8 @@ def sample(
     pcd_mode = pcd_mode.split(" ")
     num_frames = default(num_frames, 14)
     num_steps = default(num_steps, 25)
-    output_folder = default(output_folder, "outputs")
+    img_name = os.path.splitext(os.path.basename(input_path))[0]
+    output_folder = os.path.join(default(output_folder, "outputs"), img_name)
     model_config = "sgm/svd.yaml"
     pcd_dir = os.path.join(output_folder, "renderings")
     os.makedirs(output_folder, exist_ok=True)
