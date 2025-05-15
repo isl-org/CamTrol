@@ -7,6 +7,7 @@ from scipy.ndimage import minimum_filter, maximum_filter
 import gradio as gr
 from torchvision.transforms import ToTensor
 import os
+from metric_depth_anything_v2.dpt import DepthAnythingV2 as MetricDepthAnythingV2
 
 
 class CameraParams:
@@ -304,9 +305,9 @@ class Warper:
         self.H = H
         self.W = W
         self.cam = CameraParams(self.H, self.W)
-        # stable diffusion
+        # stable diffusion downloadied from stabilityai/stable-diffusion-2-inpainting
         self.rgb_model = StableDiffusionInpaintPipeline.from_pretrained(
-            "runwayml/stable-diffusion-inpainting",
+            "/export/share/projects/videogen/checkpoints/svd_inpaint",
             revision="fp16",
             safety_checker=None,
             torch_dtype=torch.float16,
@@ -991,3 +992,87 @@ class Warper:
             pts_colors = np.concatenate((pts_colors, new_pts_colors2), axis=0)
 
         return warped_images
+
+
+class DepthAnythingV2CameraParams:
+    def __init__(self, H: int = 512, W: int = 512):
+        self.H = H
+        self.W = W
+        self.focal = (470.4, 470.4)
+        self.fov = (
+            2 * np.arctan(self.W / (2 * self.focal[0])),
+            2 * np.arctan(self.H / (2 * self.focal[1])),
+        )
+        self.K = np.array(
+            [
+                [self.focal[0], 0.0, self.W / 2],
+                [0.0, self.focal[1], self.H / 2],
+                [0.0, 0.0, 1.0],
+            ]
+        ).astype(np.float32)
+
+
+class DepthAnythingV2Warper(Warper):
+    model_configs = {
+        "vits": {"encoder": "vits", "features": 64, "out_channels": [48, 96, 192, 384]},
+        "vitb": {
+            "encoder": "vitb",
+            "features": 128,
+            "out_channels": [96, 192, 384, 768],
+        },
+        "vitl": {
+            "encoder": "vitl",
+            "features": 256,
+            "out_channels": [256, 512, 1024, 1024],
+        },
+        "vitg": {
+            "encoder": "vitg",
+            "features": 384,
+            "out_channels": [1536, 1536, 1536, 1536],
+        },
+    }
+
+    def __init__(
+        self,
+        H,
+        W,
+        rgb_inpaint_ckpt="/export/share/projects/videogen/checkpoints/svd_inpaint",
+        d_ckpt="/export/share/projects/videogen/checkpoints/depth-anything/",
+        encoder="vitl",
+        max_depth=20,
+        outdoor=True,
+    ):
+        self.H = H
+        self.W = W
+        self.cam = DepthAnythingV2CameraParams(self.H, self.W)
+        self.rgb_model = StableDiffusionInpaintPipeline.from_pretrained(
+            rgb_inpaint_ckpt,
+            revision="fp16",
+            safety_checker=None,
+            torch_dtype=torch.float16,
+        ).to("cuda")
+        d_model = MetricDepthAnythingV2(
+            **{**self.model_configs[encoder], "max_depth": max_depth}
+        )
+        if outdoor:
+            dataset = "vkitti"
+        else:
+            dataset = "hypersim"
+        d_ckpt_path = os.path.join(
+            f"{d_ckpt}/depth_anything_v2_metric_{dataset}_{encoder}.pth"
+        )
+        d_model.load_state_dict(
+            torch.load(d_ckpt_path, map_location="cpu", weights_only=True)
+        )
+        DEVICE = (
+            "cuda"
+            if torch.cuda.is_available()
+            else "mps" if torch.backends.mps.is_available() else "cpu"
+        )
+
+        self.d_model = d_model.to(DEVICE).eval()
+
+    def d(self, im):
+        pred = self.d_model.infer_image(np.array(im), self.H)
+        depth = np.array(Image.fromarray(pred).resize((self.W, self.H), Image.NEAREST))
+        return depth
