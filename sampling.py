@@ -21,17 +21,18 @@ from torchvision.transforms import ToTensor
 from tqdm import tqdm
 from camera import Warper
 
+
 def sample(
     input_path: str = "assets/images/cat.jpg",  # Can either be image file or folder with image files
-    prompt: str="a cat wandering in garden",
-    neg_prompt: str=" ",
-    pcd_mode: str = 'complex default 14 mode_4',
+    prompt: str = "a cat wandering in garden",
+    neg_prompt: str = " ",
+    pcd_mode: str = "complex default 14 mode_4",
     add_index: int = 10,
     num_frames: int = 14,
     num_steps: Optional[int] = 25,
     fps_id: int = 6,
     motion_bucket_id: int = 127,
-    version: str = 'svd',
+    version: str = "svd",
     cond_aug: float = 0.02,
     seed: int = 1,
     decoding_t: int = 4,  # Number of frames decoded at a time! This eats most VRAM. Reduce if necessary.
@@ -45,12 +46,12 @@ def sample(
     Simple script to generate a single sample conditioned on an image `input_path` or multiple images, one for each
     image file in folder `input_path`. If you run out of VRAM, try decreasing `decoding_t`.
     """
-    pcd_mode = pcd_mode.split(' ')
+    pcd_mode = pcd_mode.split(" ")
     num_frames = default(num_frames, 14)
     num_steps = default(num_steps, 25)
     output_folder = default(output_folder, "outputs")
     model_config = "sgm/svd.yaml"
-    pcd_dir = os.path.join(output_folder,'renderings')
+    pcd_dir = os.path.join(output_folder, "renderings")
     os.makedirs(output_folder, exist_ok=True)
     if save_warps == True:
         os.makedirs(pcd_dir, exist_ok=True)
@@ -86,7 +87,7 @@ def sample(
 
     for input_img_path in all_img_paths:
         with Image.open(input_img_path) as image:
-            input_image = image.convert("RGB") 
+            input_image = image.convert("RGB")
             w, h = image.size
             if h % 64 != 0 or w % 64 != 0:
                 width, height = map(lambda x: x - x % 64, (w, h))
@@ -159,21 +160,34 @@ def sample(
                     return model.denoiser(
                         model.model, input, sigma, c, **additional_model_inputs
                     )
-                
+
                 if load_warps != None:
-                    print('warp path provided, reading from folder')
+                    print("warp path provided, reading from folder")
                     images = concat_warp_start(image, num_frames, load_warps)
                 else:
                     warper = Warper(H, W)
-                    images = warper.generate_pcd(input_image, prompt, neg_prompt, pcd_mode, seed, num_steps, pcd_dir, save_warps)
+                    images = warper.generate_pcd(
+                        input_image,
+                        prompt,
+                        neg_prompt,
+                        pcd_mode,
+                        seed,
+                        num_steps,
+                        pcd_dir,
+                        save_warps,
+                    )
                 latent_images = model.encode_first_stage(images)
 
                 # samples_z = model.sampler(denoiser, randn, cond=c, uc=uc)
                 randn = torch.randn(shape, device=device)
-                _, s_in, sigmas, num_sigmas, cond, uc = model.sampler.prepare_sampling_loop(randn, cond=c, uc=uc, num_steps=num_steps)            
-                
+                _, s_in, sigmas, num_sigmas, cond, uc = (
+                    model.sampler.prepare_sampling_loop(
+                        randn, cond=c, uc=uc, num_steps=num_steps
+                    )
+                )
+
                 noise = torch.randn(shape, device=device)
-                x  = latent_images + noise * sigmas[add_index]
+                x = latent_images + noise * sigmas[add_index]
 
                 for i in tqdm(model.sampler.get_sigma_gen(num_sigmas)[add_index:]):
                     gamma = (
@@ -208,23 +222,28 @@ def sample(
                     .numpy()
                     .astype(np.uint8)
                 )
-                video_path = os.path.join(output_folder, f"{base_count:06d}_{'_'.join(pcd_mode)}_i_{add_index}_seed_{seed}.gif")
+                video_path = os.path.join(
+                    output_folder,
+                    f"{base_count:06d}_{'_'.join(pcd_mode)}_i_{add_index}_seed_{seed}.gif",
+                )
                 imageio.mimwrite(video_path, vid)
 
-def concat_warp_start(image, num_frames, concat_path, device = 'cuda'):
+
+def concat_warp_start(image, num_frames, concat_path, device="cuda"):
     images = torch.Tensor([]).to(device)
     h, w = image.shape[2:]
     for i in range(num_frames):
         if i == 0:
             new_image = image
         else:
-            new_image = Image.open(f'{concat_path}/{i}_concat.png').resize((w, h))
+            new_image = Image.open(f"{concat_path}/{i}_concat.png").resize((w, h))
             new_image = ToTensor()(new_image)
             new_image = new_image * 2.0 - 1.0
             new_image = new_image.unsqueeze(0).to(device)
         images = torch.cat([images, new_image])
-    
+
     return images
+
 
 def get_unique_embedder_keys_from_conditioner(conditioner):
     return list(set([x.input_key for x in conditioner.embedders]))
